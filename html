@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Music Visualizer</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #f5f5f5;
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+        }
+        
+        #controls {
+            position: fixed;
+            bottom: 20px;
+            z-index: 100;
+            display: flex;
+            gap: 10px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        
+        button {
+            padding: 10px 18px;
+            background: #2ecc71;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-weight: 500;
+            letter-spacing: 0.3px;
+        }
+        
+        button:hover {
+            background: #27ae60;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        #visualizer-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: white;
+        }
+        
+        canvas {
+            display: block;
+            box-shadow: 0 0 40px rgba(46, 204, 113, 0.1);
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        #dropzone {
+            border: 3px dashed #2ecc71;
+            background-color: rgba(46, 204, 113, 0.05);
+            width: 80%;
+            max-width: 500px;
+            height: 200px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            cursor: pointer;
+            border-radius: 12px;
+            transition: all 0.3s ease;
+        }
+        
+        #dropzone:hover {
+            background-color: rgba(46, 204, 113, 0.1);
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(46, 204, 113, 0.15);
+        }
+        
+        #intro-panel {
+            text-align: center;
+            max-width: 600px;
+            padding: 40px 20px;
+        }
+        
+        #intro-panel h1 {
+            color: #2ecc71;
+            font-weight: 700;
+            margin-bottom: 20px;
+        }
+        
+        .mode-button {
+            margin: 5px;
+            padding: 8px 16px;
+            background: #e0e0e0;
+            color: #555;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .mode-button.active {
+            background: #2ecc71;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div id="intro-panel">
+        <h1>Interactive Music Visualizer</h1>
+        <p>Upload your own music file or use your microphone to see your sound come to life!</p>
+        <div id="dropzone">
+            <p>Drop your audio file here</p>
+            <p>or</p>
+            <button id="file-select">Select File</button>
+            <input type="file" id="audio-file" accept="audio/*" class="hidden">
+        </div>
+        <p>Or use your microphone:</p>
+        <button id="mic-start">Start Microphone</button>
+    </div>
+    
+    <div id="visualizer-container" class="hidden">
+        <canvas id="canvas"></canvas>
+    </div>
+    
+    <div id="controls" class="hidden">
+        <button id="back">Back</button>
+        <div id="mode-controls">
+            <button class="mode-button active" data-mode="bars">Bars</button>
+            <button class="mode-button" data-mode="circles">Circles</button>
+            <button class="mode-button" data-mode="particles">Particles</button>
+        </div>
+        <button id="play-pause">Pause</button>
+    </div>
+
+    <script>
+        // DOM Elements
+        const introPanel = document.getElementById('intro-panel');
+        const visualizerContainer = document.getElementById('visualizer-container');
+        const controls = document.getElementById('controls');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('audio-file');
+        const fileSelect = document.getElementById('file-select');
+        const micStart = document.getElementById('mic-start');
+        const playPauseBtn = document.getElementById('play-pause');
+        const backBtn = document.getElementById('back');
+        const modeButtons = document.querySelectorAll('.mode-button');
+
+        // Audio Context
+        let audioContext;
+        let analyser;
+        let dataArray;
+        let source;
+        let animationId;
+        let currentMode = 'bars';
+        let audioElement;
+        let isPlaying = false;
+        let particles = [];
+
+        // Set canvas size
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Initialize Audio Context
+        function initAudioContext() {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+            const bufferLength = analyser.frequencyBinCount;
+            dataArray = new Uint8Array(bufferLength);
+        }
+
+        // Setup Audio Source from File
+        function setupAudioFile(file) {
+            if (!audioContext) initAudioContext();
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                if (audioElement) {
+                    audioElement.pause();
+                    audioElement.remove();
+                }
+                
+                audioElement = new Audio();
+                audioElement.src = e.target.result;
+                source = audioContext.createMediaElementSource(audioElement);
+                source.connect(analyser);
+                analyser.connect(audioContext.destination);
+                
+                audioElement.play();
+                isPlaying = true;
+                playPauseBtn.textContent = 'Pause';
+                
+                showVisualizer();
+                visualize();
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // Setup Audio Source from Microphone
+        async function setupMicrophone() {
+            try {
+                if (!audioContext) initAudioContext();
+                
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                source = audioContext.createMediaStreamSource(stream);
+                source.connect(analyser);
+                // Don't connect to destination to avoid feedback
+                
+                isPlaying = true;
+                playPauseBtn.textContent = 'Mute';
+                
+                showVisualizer();
+                visualize();
+            } catch (err) {
+                console.error('Error accessing microphone:', err);
+                alert('Could not access microphone. Please ensure you have granted permission.');
+            }
+        }
+
+        // Switch to Visualizer View
+        function showVisualizer() {
+            introPanel.classList.add('hidden');
+            visualizerContainer.classList.remove('hidden');
+            controls.classList.remove('hidden');
+        }
+
+        // Return to Intro Panel
+        function returnToIntro() {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            
+            if (audioElement) {
+                audioElement.pause();
+                audioElement.currentTime = 0;
+            }
+            
+            if (source) {
+                source.disconnect();
+                source = null;
+            }
+            
+            isPlaying = false;
+            visualizerContainer.classList.add('hidden');
+            controls.classList.add('hidden');
+            introPanel.classList.remove('hidden');
+        }
+
+        // Play/Pause Toggle
+        function togglePlayPause() {
+            if (!audioElement && !source) return;
+            
+            if (audioElement) {
+                if (isPlaying) {
+                    audioElement.pause();
+                    playPauseBtn.textContent = 'Play';
+                } else {
+                    audioElement.play();
+                    playPauseBtn.textContent = 'Pause';
+                }
+                isPlaying = !isPlaying;
+            } else {
+                // For microphone - this just mutes/unmutes the visualizer
+                if (isPlaying) {
+                    cancelAnimationFrame(animationId);
+                    animationId = null;
+                    playPauseBtn.textContent = 'Unmute';
+                } else {
+                    visualize();
+                    playPauseBtn.textContent = 'Mute';
+                }
+                isPlaying = !isPlaying;
+            }
+        }
+
+        // Draw Bars Visualization
+        function drawBars() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            analyser.getByteFrequencyData(dataArray);
+            
+            const barWidth = (canvas.width / dataArray.length) * 2.5;
+            let barHeight;
+            let x = 0;
+            
+            for (let i = 0; i < dataArray.length; i++) {
+                barHeight = dataArray[i] * 2;
+                
+                // Create gradient based on frequency amplitude
+                const gradient = ctx.createLinearGradient(0, canvas.height - barHeight, 0, canvas.height);
+                // Green-focused gradient
+                gradient.addColorStop(0, `hsl(${120 + i * 40 / dataArray.length}, 80%, 50%)`);
+                gradient.addColorStop(1, `hsl(${120 + i * 40 / dataArray.length}, 80%, 30%)`);
+                
+                ctx.fillStyle = gradient;
+                ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+                
+                x += barWidth + 1;
+            }
+        }
+
+        // Draw Circles Visualization
+        function drawCircles() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            analyser.getByteFrequencyData(dataArray);
+            
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            
+            // Draw multiple circles based on frequency ranges
+            for (let i = 0; i < dataArray.length; i += 5) {
+                const avg = (dataArray[i] + (dataArray[i+1] || 0) + (dataArray[i+2] || 0) + (dataArray[i+3] || 0) + (dataArray[i+4] || 0)) / 5;
+                const radius = avg * 1.5 + 10;
+                
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+                ctx.strokeStyle = `hsl(${120 + i * 40 / dataArray.length}, 80%, 50%)`;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+            
+            // Add a pulsing effect in the middle
+            const bassValue = dataArray[0];
+            const pulseRadius = bassValue * 0.5;
+            
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, pulseRadius, 0, 2 * Math.PI);
+            ctx.fillStyle = `rgba(46, 204, 113, ${bassValue/255})`;
+            ctx.fill();
+        }
+
+        // Create a Particle
+        function Particle(x, y, size, hue, speed) {
+            this.x = x;
+            this.y = y;
+            this.size = size;
+            this.hue = hue;
+            this.speed = speed;
+            this.alpha = 1;
+            this.velocity = {
+                x: Math.random() * speed * 2 - speed,
+                y: Math.random() * speed * 2 - speed
+            };
+        }
+
+        // Draw a Particle
+        Particle.prototype.draw = function() {
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            ctx.fillStyle = `hsla(${this.hue}, 80%, 50%, ${this.alpha})`;
+            ctx.fill();
+        };
+
+        // Update Particle Position and State
+        Particle.prototype.update = function() {
+            this.x += this.velocity.x;
+            this.y += this.velocity.y;
+            this.alpha -= 0.01;
+            this.size -= 0.1;
+        };
+
+        // Draw Particles Visualization
+        function drawParticles() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            analyser.getByteFrequencyData(dataArray);
+            
+            // Create new particles based on audio data
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            
+            // Use bass frequencies to generate particles
+            const bassValue = dataArray[0];
+            if (bassValue > 150) {
+                for (let i = 0; i < 5; i++) {
+                    const size = Math.random() * 20 + 10;
+                    const hue = 100 + Math.random() * 60; // Green range
+                    const speed = bassValue / 30;
+                    particles.push(new Particle(centerX, centerY, size, hue, speed));
+                }
+            }
+            
+            // Use mid frequencies for another set of particles
+            const midValue = dataArray[10];
+            if (midValue > 120) {
+                for (let i = 0; i < 3; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const distance = 100;
+                    const x = centerX + Math.cos(angle) * distance;
+                    const y = centerY + Math.sin(angle) * distance;
+                    const size = Math.random() * 15 + 5;
+                    const hue = Math.random() * 30 + 130; // Green-teal range
+                    const speed = midValue / 40;
+                    particles.push(new Particle(x, y, size, hue, speed));
+                }
+            }
+            
+            // Draw and update all particles
+            for (let i = 0; i < particles.length; i++) {
+                particles[i].update();
+                particles[i].draw();
+                
+                // Remove particles that are too small or transparent
+                if (particles[i].size <= 0.2 || particles[i].alpha <= 0) {
+                    particles.splice(i, 1);
+                    i--;
+                }
+            }
+        }
+
+        // Main Visualization Loop
+        function visualize() {
+            animationId = requestAnimationFrame(visualize);
+            
+            switch (currentMode) {
+                case 'bars':
+                    drawBars();
+                    break;
+                case 'circles':
+                    drawCircles();
+                    break;
+                case 'particles':
+                    drawParticles();
+                    break;
+            }
+        }
+
+        // Event Listeners
+        fileSelect.addEventListener('click', () => fileInput.click());
+        
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files[0]) {
+                setupAudioFile(e.target.files[0]);
+            }
+        });
+        
+        micStart.addEventListener('click', setupMicrophone);
+        
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.style.borderColor = '#27ae60';
+        });
+        
+        dropzone.addEventListener('dragleave', () => {
+            dropzone.style.borderColor = '#2ecc71';
+        });
+        
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.style.borderColor = '#8a2be2';
+            
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('audio/')) {
+                setupAudioFile(file);
+            } else {
+                alert('Please drop an audio file');
+            }
+        });
+        
+        playPauseBtn.addEventListener('click', togglePlayPause);
+        
+        backBtn.addEventListener('click', returnToIntro);
+        
+        modeButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                currentMode = button.dataset.mode;
+                
+                modeButtons.forEach(btn => btn.classList.remove('active'));
+                button.classList.add('active');
+                
+                // Reset particles when switching modes
+                if (currentMode !== 'particles') {
+                    particles = [];
+                }
+            });
+        });
+    </script>
+</body>
+</html>
